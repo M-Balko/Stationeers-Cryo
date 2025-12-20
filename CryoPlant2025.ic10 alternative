@@ -1,0 +1,463 @@
+# ============================================================
+# KRYOGÉNNA PLYNÁREŇ – KOMPLETNÝ SYSTÉM (OPTIMALIZOVANÁ VERZIA)
+# CIP 1, FILT, 4, HEX, 9, 10, 11
+# ============================================================
+
+# ------------------------------------------------------------
+# CIP 1 – Vstupný manažér
+# Crusher + Buffer + LiqH2O + RegPec + N2 ochrana
+# ------------------------------------------------------------
+
+alias Crusher d0
+alias Buffer  d1
+alias LiqH2O  d2
+alias RegPec  d5
+
+define H_SENS    -1089901763
+define H_N2LINE  <HASH_N2_LINE>
+define H_N2TANK  <HASH_N2_TANK>
+
+start_cip1:
+  yield
+
+  select r6 H_SENS 0
+  bdns r6 start_cip1
+
+  select r7 H_N2LINE 0
+  select r8 H_N2TANK 0
+
+  l r0 Buffer Pressure
+  l r1 Buffer Temperature
+  l r2 dr6 Temperature
+  l r4 LiqH2O Pressure
+
+  l r20 dr7 Pressure
+  l r21 dr8 Pressure
+
+  # PEC podmienky
+  slt r10 r0 8500
+  slt r11 r2 380
+  slt r12 r20 5000
+  slt r13 r21 8000
+
+  and r14 r10 r11
+  and r14 r14 r12
+  and r14 r14 r13
+
+  s RegPec On r14
+  s RegPec Setting 5000
+
+  # Crusher
+  slt r15 r0 8000
+  slt r16 r4 10000
+  sgt r17 r1 123
+
+  and r15 r15 r16
+  and r15 r15 r17
+
+  s Crusher On r15
+
+  j start_cip1
+
+
+# ------------------------------------------------------------
+# CIP FILT – Filtračné vetvy (2,3,5,6,7,8)
+# Filt + recirkulácia + odpad X + diagnostika
+# ------------------------------------------------------------
+
+alias Filt   d0
+alias Svetlo d1
+
+define H_G -1510403604
+define H_L -1382436151
+define H_P  1162385412
+
+start_filt:
+  yield
+
+  select r1 H_G 0
+  select r2 H_L 0
+  select r3 H_P 0
+  select r4 H_P 1
+
+  bdns r1 start_filt
+
+  l r10 Filt PressureInput
+  l r11 dr1 Pressure
+  l r12 dr2 Pressure
+  l r14 db Setting
+
+  # Recirkulácia
+  sgt r5 r12 500
+  s dr4 On r5
+  s dr4 Setting 10
+
+  # Odpad X
+  sub r15 r11 7600
+  div r15 r15 1900
+  max r15 r15 0
+  min r15 r15 1
+
+  sgt r6 r11 7600
+  s dr3 On r6
+  s dr3 Setting r15
+
+  # Hysterézia filtrácie
+  sgt r7 r14 0
+  set r16 0
+
+  brgt r7 0 3
+  j 4
+
+  sgt r16 r10 15000
+  j 3
+
+  sgt r16 r10 50000
+
+  slt r5 r11 9500
+  slt r6 r12 8500
+
+  and r16 r16 r5
+  and r16 r16 r6
+
+  s Filt On r16
+  s db Setting r16
+
+  # Diagnostika filtrov – Svetlo
+  ls r20 Filt 0 Quantity
+  ls r21 Filt 1 Quantity
+  add r20 r20 r21
+  mul r20 r20 50
+
+  set r22 0
+  sgt r23 r20 50
+  brgt r23 0 3
+  sgt r23 r20 15
+  brgt r23 0 2
+  j 2
+  set r22 4
+  j 1
+  set r22 2
+
+  s Svetlo Color r22
+  s Svetlo On 1
+
+  j start_filt
+
+
+# ------------------------------------------------------------
+# CIP 4 – Odpadová vetva X (výstup do atmosféry)
+# ------------------------------------------------------------
+
+alias Filt d0
+define H_ATMO_VENT 1162385412
+
+start_x:
+  yield
+
+  select r3 H_ATMO_VENT 0
+  bdns r3 start_x
+
+  l r1 Filt PressureOutput
+
+  sub r10 r1 7600
+  div r10 r10 1900
+  max r10 r10 0
+  min r10 r10 1
+
+  sgt r5 r1 7600
+  s dr3 On r5
+  s dr3 Setting r10
+
+  j start_x
+
+
+# ------------------------------------------------------------
+# CIP HEX – Pec -> výmenník -> N2 -> N2 tank
+# ------------------------------------------------------------
+
+define H_PEC_EXH  <HASH_PEC_EXHAUST>
+define H_N2_LINE  <HASH_N2_LINE>
+define H_N2_TANK  <HASH_N2_TANK>
+define H_HEX_VENT <HASH_HEX_VENT>
+
+start_hex:
+  yield
+
+  select r0 H_PEC_EXH  0
+  select r1 H_N2_LINE  0
+  select r2 H_N2_TANK  0
+  select r3 H_HEX_VENT 0
+
+  bdns r0 start_hex
+  bdns r1 start_hex
+  bdns r2 start_hex
+  bdns r3 start_hex
+
+  l r10 dr0 Pressure
+  l r11 dr1 Pressure
+  l r12 dr2 Pressure
+
+  # Pec_need: 2-8MPa -> 0-1
+  sub r20 r10 2000
+  div r20 r20 6000
+  max r20 r20 0
+  min r20 r20 1
+
+  # N2_cap: 6-3MPa -> 0-1
+  sub r21 6000 r11
+  div r21 r21 3000
+  max r21 r21 0
+  min r21 r21 1
+
+  # Tank_cap: 9-6MPa -> 0-1
+  sub r22 9000 r12
+  div r22 r22 3000
+  max r22 r22 0
+  min r22 r22 1
+
+  min r23 r20 r21
+  min r23 r23 r22
+
+  sgt r30 r10 2000
+  slt r31 r11 6000
+  slt r32 r12 9000
+
+  and r33 r30 r31
+  and r33 r33 r32
+
+  s dr3 On r33
+  s dr3 Setting r23
+
+  j start_hex
+
+
+# ------------------------------------------------------------
+# CIP 9 – Kryogénny manažér (LN2 & chladenie + N2 ochrana)
+# ------------------------------------------------------------
+
+alias MainGas d0
+alias Cond    d1
+alias Vap     d2
+alias TankLN2 d3
+alias Recov   d4
+alias Circ    d5
+
+define T_TGT     123
+define H_N2_TANK <HASH_N2_TANK>
+
+start_cryo:
+  yield
+
+  select r5 H_N2_TANK 0
+  bdns r5 start_cryo
+
+  l r0 MainGas Temperature
+  l r1 TankLN2 Pressure
+  l r10 db Setting
+  l r20 dr5 Pressure      # N2Tank pressure
+
+  # N2Tank ochrana
+  sgt  r21 r20 9000       # 1 ak N2Tank > 9MPa
+  seqz r22 r21            # 1 ak N2Tank nie je plny
+
+  # Hysterézia chladenia
+  set r30 0
+  sgt r31 r10 0
+  brgt r31 0 4            # bolo ON
+  # vetva OFF
+  add r11 T_TGT 2
+  sgt r30 r0 r11
+  j 4
+  # vetva ON
+  sgt r30 r0 T_TGT
+
+  and r30 r30 r22
+
+  s Cond On r30
+  s Vap On r30
+  s Circ On r30
+  s db Setting r30
+
+  # Rekuperácia LN2
+  sub r15 r1 8000
+  div r15 r15 500
+  max r15 r15 0
+  min r15 r15 1
+
+  and r35 r15 r22
+
+  sgt r40 r1 8000
+  s Recov On r40
+  s Recov Setting r35
+
+  # extra Vap ON pri vysokom LN2 tlaku
+  brgt r1 8000 2
+  j 1
+  s Vap On 1
+
+  j start_cryo
+
+
+# ------------------------------------------------------------
+# CIP 10 – ATMO-COMBO (Mixery + Emergency Vents)
+# ------------------------------------------------------------
+
+alias MixNit d0
+alias MixAir d1
+alias MixFuel d2
+alias Sen     d3
+alias Vents   d4
+alias Tank    d5
+
+start_mix:
+  yield
+
+  l r0 Sen Pressure
+  l r4 Tank Pressure
+  l r15 db Setting      # stav havárie (0/1)
+
+  # Hysterézia havárie 115 -> 101 kPa
+  brgt r0 115 3
+  brlt r0 101 3
+  j 2
+  set r15 1
+  set r15 0
+
+  s db Setting r15
+  s Vents On r15
+
+  # if r15 > 0
+  sgt r20 r15 0
+  brgt r20 0 4
+  # else
+  s Vents Mode 0
+  j 3
+  # if
+  s Vents Mode 1
+  s Vents PressureInternal 0
+
+  # Miešanie
+  slt  r10 r4 5000      # Tank < 5MPa
+  seqz r11 r15          # 1 ak nie je havária
+  and  r10 r10 r11
+
+  s MixNit On r10
+  s MixAir On r10
+  s MixNit Setting 75
+  s MixAir Setting 96
+
+  s MixFuel On r11
+  s MixFuel Setting 66
+
+  j start_mix
+
+
+# ------------------------------------------------------------
+# CIP 11 – DIAGNOSTIKA CELÉHO SYSTÉMU
+# ------------------------------------------------------------
+
+alias DiagLight d0
+alias DiagPanel d1
+
+define H_REGPEC   <HASH_REGPEC>
+define H_CRUSHER  <HASH_CRUSHER>
+define H_FILT_MAIN <HASH_FILT_MAIN>
+define H_HEX_VENT <HASH_HEX_VENT>
+define H_N2_TANK  <HASH_N2_TANK>
+define H_VENTS    <HASH_VENTS>
+
+start_diag:
+  yield
+
+  # N2 tank
+  select r0 H_N2_TANK 0
+  bdns r0 start_diag
+  l r10 dr0 Pressure
+
+  # HEX ventil
+  select r1 H_HEX_VENT 0
+  l r11 dr1 On
+
+  # Vents (atmo emergency)
+  select r2 H_VENTS 0
+  l r12 dr2 On
+
+  # RegPec
+  select r3 H_REGPEC 0
+  l r13 dr3 On
+
+  # Crusher
+  select r4 H_CRUSHER 0
+  l r14 dr4 On
+
+  # Filter (referenčný)
+  select r5 H_FILT_MAIN 0
+  l r15 dr5 On
+
+  # Kryo stav – tu je to len ilustratívne, ak máš separátnu db,
+  # môžeš ju nahradiť iným zdrojom
+  l r16 db Setting
+
+  # BITOVÝ KÓD PRE PANEL
+  set r30 0
+
+  # bit0: Pec
+  and r20 r13 1
+  add r30 r30 r20
+
+  # bit1: Crusher
+  and r21 r14 1
+  mul r21 r21 2
+  add r30 r30 r21
+
+  # bit2: Filter
+  and r22 r15 1
+  mul r22 r22 4
+  add r30 r30 r22
+
+  # bit3: Kryo (r16)
+  and r23 r16 1
+  mul r23 r23 8
+  add r30 r30 r23
+
+  # bit4: Havária (Vents On)
+  and r24 r12 1
+  mul r24 r24 16
+  add r30 r30 r24
+
+  # bit5: HEX On
+  and r25 r11 1
+  mul r25 r25 32
+  add r30 r30 r25
+
+  s DiagPanel Setting r30
+
+  # FARBA DIAG LIGHT
+  set r40 0
+
+  # Kritické stavy: N2Tank > 9MPa alebo havária
+  sgt r41 r10 9000
+  or  r41 r41 r12
+
+  brgt r41 0 3
+  j 2
+  set r40 2          # červená
+  j 6
+
+  # Varovné stavy: 8-9MPa N2Tank
+  sgt r42 r10 8000
+  slt r43 r10 9000
+  and r42 r42 r43
+
+  brgt r42 0 2
+  j 2
+  set r40 4          # oranžová
+  j 1
+
+  # inak ostane 0 (zelená)
+
+  s DiagLight Color r40
+  s DiagLight On 1
+
+  j
