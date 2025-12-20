@@ -1,1 +1,188 @@
+# ============================================================
+# KRUOGENNA PLYNAREN - KOMPLETNY SYSTEM (VERZIA 20.12.2025)
+# ============================================================
 
+# ------------------------------------------------------------
+# CIP 1: VSTUPNY MANAZER (Drticka, Buffer a H2O)
+# ------------------------------------------------------------
+# d0: Crusher | d1: Buffer | d2: LiqH2O | d5: RegPec
+alias Crusher d0
+alias Buffer d1
+alias LiqH2O d2
+alias RegPec d5
+define H_SENS -1089901763
+
+start:
+  yield
+  select r6 H_SENS 0
+  bdns r6 start
+  l r0 Buffer Pressure
+  l r1 Buffer Temperature
+  l r2 dr6 Temperature
+  l r4 LiqH2O Pressure
+  # Pec: Zapni ak (Tlak < 8.5MPa) AND (Teplota < 107C)
+  slt r10 r0 8500
+  slt r11 r2 380
+  and r12 r10 r11
+  s RegPec On r12
+  s RegPec Setting 5000
+  # Drticka: (Tlak < 8MPa) AND (H2O < 10MPa) AND (T > -150C)
+  slt r13 r0 8000
+  slt r14 r4 10000
+  sgt r15 r1 123
+  and r13 r13 r14
+  and r13 r13 r15
+  s Crusher On r13
+  j start
+
+# ------------------------------------------------------------
+# CIPY 2, 3, 5, 6, 7, 8: FILTRACNE VETVY (Hash Automation)
+# ------------------------------------------------------------
+# d0: Filt | d1: Svetlo
+alias Filt d0
+alias Svetlo d1
+define H_G -1510403604
+define H_L -1382436151
+define H_P 1162385412
+
+start_filt:
+  yield
+  select r1 H_G 0
+  select r2 H_L 0
+  select r3 H_P 0 # Odpad X
+  select r4 H_P 1 # Recirkulacia
+  bdns r1 start_filt
+  l r10 Filt PressureInput
+  l r11 dr1 Pressure
+  l r12 dr2 Pressure
+  l r14 db Setting
+  # Recirkulacia L -> G
+  sgt r5 r12 500
+  s dr4 On r5
+  s dr4 Setting 10
+  # Odpad X (7.6 - 9.5 MPa)
+  sub r15 r11 7600
+  div r15 r15 1900
+  max r15 r15 0
+  min r15 r15 1
+  s dr3 On (r11 > 7600)
+  s dr3 Setting r15
+  # Hysterezia filtracie (15-50 kPa)
+  if r14 > 0:
+    set r14 (r10 > 15000)
+  else:
+    set r14 (r10 > 50000)
+  slt r5 r11 9500
+  slt r6 r12 8500
+  and r14 r14 r5
+  and r14 r14 r6
+  s Filt On r14
+  s db Setting r14
+  # Diagnostika filtrov (Svetlo)
+  ls r20 Filt 0 Quantity
+  ls r21 Filt 1 Quantity
+  add r20 r20 r21
+  mul r20 r20 50
+  if r20 > 50: s Svetlo Color 2
+  elif r20 > 15: s Svetlo Color 4
+  else: s Svetlo Color 0
+  s Svetlo On 1
+  j start_filt
+
+# ------------------------------------------------------------
+# CIP 4: ODPADOVA VETVA X (Vystup do atmosfery)
+# ------------------------------------------------------------
+# d0: Filt | d1: Svetlo
+alias Filt d0
+alias Svetlo d1
+define H_ATMO_VENT 1162385412
+
+start_x:
+  yield
+  select r3 H_ATMO_VENT 0
+  l r1 Filt PressureOutput # Nadrz X
+  sub r10 r1 7600
+  div r10 r10 1900
+  max r10 r10 0
+  min r10 r10 1
+  s dr3 On (r1 > 7600)
+  s dr3 Setting r10
+  j start_x
+
+# ------------------------------------------------------------
+# CIP 9: KRYOGENNY MANAZER (LN2 & Chladenie)
+# ------------------------------------------------------------
+# d0: GasIntake | d1: Cond | d2: Vap | d3: TankLN2 | d4: Recov | d5: CircPump
+alias MainGas d0
+alias Cond d1
+alias Vap d2
+alias TankLN2 d3
+alias Recov d4
+alias Circ d5
+define T_TGT 123
+
+start_cryo:
+  yield
+  l r0 MainGas Temperature
+  l r1 TankLN2 Pressure
+  l r10 db Setting
+  # Hysterezia chladenia
+  if r10 > 0:
+    set r10 (r0 > T_TGT)
+  else:
+    add r11 T_TGT 2
+    set r10 (r0 > r11)
+  s Cond On r10
+  s Vap On r10
+  s Circ On r10
+  s db Setting r10
+  # Rekuperacia LN2
+  sub r15 r1 8000
+  div r15 r15 500
+  max r15 r15 0
+  min r15 r15 1
+  s Recov On (r1 > 8000)
+  s Recov Setting r15
+  if r1 > 8000: s Vap On 1
+  j start_cryo
+
+# ------------------------------------------------------------
+# CIP 10: ATMO-COMBO (Mixery + Emergency Vents)
+# ------------------------------------------------------------
+# d0: MixNit | d1: MixAir | d2: MixFuel | d3: Senzor | d4: Vents | d5: Tank
+alias MixNit d0
+alias MixAir d1
+alias MixFuel d2
+alias Sen d3
+alias Vents d4
+alias Tank d5
+
+start_mix:
+  yield
+  l r0 Sen Pressure
+  l r4 Tank Pressure
+  # Havaria (Hysterezia 115 -> 101 kPa)
+  l r15 db Setting
+  brgt r0 115 3
+  brlt r0 101 3
+  j 2
+  set r15 1
+  set r15 0
+  s db Setting r15
+  s Vents On r15
+  if r15 > 0:
+    s Vents Mode 1
+    s Vents PressureInternal 0
+  else:
+    s Vents Mode 0
+  # Miesanie (Air 4% CO2)
+  slt r10 r4 5000
+  seqz r11 r15
+  and r10 r10 r11
+  s MixNit On r10
+  s MixAir On r10
+  s MixNit Setting 75
+  s MixAir Setting 96
+  s MixFuel On r11
+  s MixFuel Setting 66
+  j start_mix
